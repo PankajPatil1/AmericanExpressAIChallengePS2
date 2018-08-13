@@ -2,11 +2,11 @@
 title: "American Express Problem Statement 2"
 author: "Pankaj Patil"
 date: "12 August 2018"
+---
 output:
-  html_document:
-    df_print: paged
-  pdf_document: default
-  word_document: default
+  md_document:
+    variant: markdown_github
+
 ---
 
 ```{r setup, include=FALSE}
