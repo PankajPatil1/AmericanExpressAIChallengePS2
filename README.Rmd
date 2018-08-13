@@ -1,0 +1,221 @@
+---
+title: "American Express Problem Statement 2"
+author: "Pankaj Patil"
+date: "12 August 2018"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+  The code below was used to generate the models in response to the [Challenge](https://www.hackerearth.com/challenge/hiring/ai-problem-statement-2/machine-learning/topical-segmentation-of-financial-news-documents/) issued by American Express. I chose to solve the second problem statement as I had more experience in processing tabulated and structered data. The features in  this data set were anonymised thus there was no requirement of "domain knowledge" for this problem which also rules out feature engineering though I did end up using a feature which did have a tiny impact on results.
+
+**This file contains snippets of codes with the explaining notes before/after the snippets. These notes explain the approach taken by me at various steps of modelling**
+
+# Problem Statement
+Supervised models are widely used to predict the probability of an event, such as whether a transaction is a fraud or an account will default or not. Many powerful algorithms exist to build suitable models, such as Boosting, Deep Learning, Support Vector Machines, etc. Measuring the effectiveness of such Machine Learning models is important to understand the value in the business. One measure is AUC (area under the curve), where the x-axis is the percentage of false positives and y-axis percentage of true positives. Due to the operational constraint/cost in many domains, only a small fraction of transactions can only be reviewed to confirm a prediction. For example, if a model scores 1MM transactions and the goal is to catch frauds, only top 5% transactions sorted by scores in descending order (assuming higher the score, more likely it will be a fraud) may be reviewed. In such a case, we also want high accuracy in the left area under the curve (LAUC) of the model besides good AUC. The goal is to build a supervised model on a sample of fraud data where both AUC and LAUC is as strong as possible
+
+# Data Description
+Binary-class data with 406709 rows and 54 variables (10 Numerical and 44 Categorical). The header file is provided whose first row mentions the variable names and second row mentions the type of those respective variables (Numerical, Categorical). The first column of the data is the unique identifier for each row. The last column mentions the class/label for each row.
+
+# Approach
+In past, I've had great success with using LightGBM and Catboost in classification problems like this one. And since the features were anonymised, I decided to center and scale them (read numerial variables) as this is the ideal distribution for many algorithms.Correlated columns were removed, some skewed columns were changed to a logarithmic scale. Apart from this, I used self designed cross validation method to verify the accuracy of models. The models I tried include but not limited to GLM, XGBoost, Catboost, LightGBM etc. Catboost and lightgbm outperformed other models and were fast even on this huge dataset. Once, I had finalized the model details using cross validation scores, I simply trained the models using whole dataset and submitted the resulting .csv file.
+
+```{r message=FALSE}
+rm(list=ls())
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(catboost)
+library(pROC)
+library(lightgbm)
+library(cowplot)
+library(corrplot)
+library(ggplot2)
+```
+
+The code section below imports the training data set and the test data set. Once, the datasets are loaded into the R environment, the id/key column is stored in to trainID and id for train and test dataset respectively. Also, information regarding which columns are categorical and which columns are numerical is stored for later use.
+
+```{r import}
+train <- read.csv("train.csv",header=F)
+test <- read.csv("test.csv",header=F)
+trainID <- train[,1]
+train[,1] <- NULL
+numcols <- c(1:10)
+catcols <- 11:(dim(train)[2]-1)
+target <- train[,dim(train)[2]]
+train <- train[,-dim(train)[2]]
+id <- test[,1]
+test[,1] <- NULL
+```
+
+Once the data was imported the columns were renamed and the target/label column was separated into another variable. The remaining datasets were merged to carry out the data processing and visualization.
+```{r}
+vec <- paste0("V",1:dim(train)[2])
+colnames(train) <- vec
+colnames(test) <- vec
+dt <- rbind(train,test)
+trainrows <- nrow(train)
+testrows <- nrow(test)
+rm(test)
+
+```
+
+# Visualizing numerical data
+```{r Visualizing numerical data, fig.align='center'}
+label <- as.factor(target)
+plot_1 <-   (ggplot(data=train) + geom_histogram(aes(x=train[,1],fill=label)))  
+plot_2 <-  (ggplot(data=train) + stat_density(aes(x=train[,2],fill=label))) 
+plot_3 <-  (ggplot(data=train) + stat_density(aes(x=train[,3],fill=label)))  
+plot_4 <-  (ggplot(data=train) + stat_density(aes(x=train[,4],fill=label)))  
+plot_5 <-  (ggplot(data=train) + stat_density(aes(x=train[,5],fill=label))) 
+plot_6 <-  (ggplot(data=train) + stat_density(aes(x=train[,6],fill=label))) 
+plot_7 <-  (ggplot(data=train) + stat_density(aes(x=train[,7],fill=label))) 
+plot_8 <-  (ggplot(data=train) + stat_density(aes(x=train[,8],fill=label))) 
+plot_9 <-  (ggplot(data=train) + stat_density(aes(x=train[,9],fill=label))) 
+plot_10 <-  (ggplot(data=train) + stat_density(aes(x=train[,10],fill=label)))
+plot_grid(plot_1,plot_2,plot_3,plot_4)
+plot_grid(plot_5,plot_6,plot_7)
+plot_grid(plot_8,plot_9,plot_10)
+  
+  
+corrplot(cor(train[,1:10]),method="square")
+```
+
+V7 and V9 have a higher correlation but the rest of the variables are not highly correlated. Thus V7 column was dropped. Also, V3 and V4 were converted to a logarithmic scale to handle their skewness.For feature engineering, with a little trial and error based on distribution, product of V3 and V4 was used. After this, all the numerical columns were scaled and centered.
+**The visualizations for categorical data have not been included in this code to preserve readabilitiy of the document**
+
+# Pre-Processing the data
+
+```{r Pre Processing}
+dt[,3] <- log(dt[,3]+1)
+dt[,4] <- log(dt[,4]+1)
+dt[,7] <- dt[,1]*dt[,2]
+preProc <- preProcess(dt[,numcols],method=c("center","scale"))  
+dt[,numcols] <- predict(preProc,newdata=dt[,numcols])
+for (j in catcols){
+  dt[,j] <- as.factor(dt[,j])
+}
+```
+
+Since the data is huge, entire data was not used for cross validation and hyper-parameter tuning. The hyper parameter tuning was conducted using grid search for the machine learning algorithm by Yandex [Catboost](https://github.com/catboost/catboost). The cross validation was a 10-fold cross validation for each algorithm with **AUC** score as evaluation metric.
+
+Similar methodology was adopted for cross validating the [LightGBM](https://github.com/Microsoft/LightGBM) by Microsoft. The hyperparameter tuning here was done manually.
+
+Once both algorithms were tuned, they were submitted for evaluation on public leaderboard and performed quite decently. To improve the model, an ensemble of models was created and their weighted average was taken. The weights were decided on the basis cross validation scores. 
+
+
+
+```{r Preparation}
+train <- dt[1:trainrows,]
+test <- dt[(trainrows+1):dim(dt)[1],]
+# temp <- train
+n <- sample(1:trainrows,size = 50000)
+ctrain <- train[n,]
+# target2 <- target
+ctarget <- target[n]
+rm(dt)
+nfolds <- 5
+folds <- createFolds(ctrain[,1],k=nfolds)
+vec <- 1:nfolds
+aucvals2 <- vector()
+ctrain2 <- sapply(ctrain,as.numeric)
+ctrain2 <- as.matrix(ctrain2)
+
+```
+
+**The code snippet below only contains the cross validation for ensemble modelling using 5-fold cv.**
+The following snippet will train base models and calculated weighted average of predictions. These weights were manually tuned for better results
+```{r ,eval=F, echo=T}
+for(j in vec){
+  x <- unlist(folds[j])
+  train_set <- lgb.Dataset(data= (ctrain2[-x,]),label=ctarget[-x])
+  test_set <-  as.matrix(ctrain2[x,])
+  train_set2 <- xgb.DMatrix(data= (ctrain2[-x,]),label=ctarget[-x])
+  learn_pool <- catboost.load_pool(data=ctrain[-x,],label=ctarget[-x],cat_features = catcols)
+  test_pool <- catboost.load_pool(data=ctrain[x,])
+  classifiercb1 <- catboost.train(learn_pool,params=list(eval_metric="AUC",l2_leaf_reg = 3,
+                                                         border_count = 32,
+                                                         rsm = 1,
+                                                         iterations = 1500, learning_rate = 0.8, depth = 10))
+  classifiercb2 <- catboost.train(learn_pool,params=list(eval_metric="AUC"))
+  classifiercb3 <- catboost.train(learn_pool,params=list(eval_metric="AUC",l2_leaf_reg = 1,
+                                                         border_count = 32,
+                                                         rsm = 0.8,
+                                                         iterations = 1500, learning_rate = 0.8, depth = 6))
+  
+  # classifierlgbm <- lightgbm(params=list(objective = "binary",
+  #                                         metric = "auc",num_iterations = 1500,learning_rate=0.3),data=train_set,boosting="dart") 
+  classifierlgbm2 <- lightgbm(params=list(objective = "binary",
+                                          metric = "auc",num_iterations = 1500,learning_rate=0.1),data=train_set) 
+  y_predlgbm <- predict(classifierlgbm,test_set)
+  y_predlgbm2 <- predict(classifierlgbm2,test_set)
+  y_predcb1 <- catboost.predict(classifiercb1,test_pool)
+  y_predcb2 <- catboost.predict(classifiercb2,test_pool)
+  y_predcb3 <- catboost.predict(classifiercb3,test_pool)
+  
+  fpred <-  y_predcb1 * 0.1 + y_predcb2*0.1 + y_predcb3*0.1 + y_predlgbm2*0.35 + y_predlgbm*0.35  
+  
+  AUC <- auc(ctarget[x],fpred)
+  aucvals2[j] <- AUC
+}
+
+
+```
+
+**On an average a AUC score of 0.97 was obtained**
+
+This same procedure was used to train the final model
+
+# Final Model 
+
+```{r ,eval=F, echo=T}
+rm(train_set)
+rm(learn_pool)
+rm(test_set)
+rm(test_pool)
+learn_pool <- catboost.load_pool(data=train,label=target,cat_features = catcols)
+test_pool <- catboost.load_pool(data=test,cat_features = catcols)
+train2 <- sapply(train,as.numeric)
+train2 <- as.matrix(train2)
+train_set <- lgb.Dataset(data= (train2),label=target)
+test2 <- sapply(test,as.numeric)
+test_set <-  as.matrix(test2)
+classifiercb1 <- catboost.train(learn_pool,params=list(eval_metric="AUC",l2_leaf_reg = 3,
+                                                       border_count = 32,
+                                                       rsm = 1,
+                                                       iterations = 1500, learning_rate = 0.8, depth = 10))
+classifiercb2 <- catboost.train(learn_pool,params=list(eval_metric="AUC"))
+classifiercb3 <- catboost.train(learn_pool,params=list(eval_metric="AUC",l2_leaf_reg = 1,
+                                                       border_count = 32,
+                                                       rsm = 0.8,
+                                                       iterations = 1500, learning_rate = 0.8, depth = 6))
+
+classifierlgbm <- lightgbm(params=list(objective = "binary",
+                                       metric = "auc",num_iterations = 1500,learning_rate=0.3),data=train_set,boosting="dart")
+classifierlgbm2 <- lightgbm(params=list(objective = "binary",
+                                        metric = "auc",num_iterations = 1500,learning_rate=0.1),data=train_set) 
+y_predlgbm <- predict(classifierlgbm,test_set)
+y_predlgbm2 <- predict(classifierlgbm2,test_set)
+y_predcb1 <- catboost.predict(classifiercb1,test_pool)
+y_predcb2 <- catboost.predict(classifiercb2,test_pool)
+y_predcb3 <- catboost.predict(classifiercb3,test_pool)
+
+fpred <-  y_predcb1 * 0.1 + y_predcb2*0.1 + y_predcb3*0.1 + y_predlgbm2*0.35 + y_predlgbm*0.35  
+
+
+final_results <- data.frame(key = id,score=fpred)
+write.csv(final_results,"eny1.csv",row.names = F)
+
+
+```
+
+## Ending Note
+The final model fetcheda score of 0.962x on the public leaderboard. The results for private leaderboard are awaited. I would like to express my gratitude to American Express for conducting this competition.
