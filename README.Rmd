@@ -1,12 +1,7 @@
 ---
-title: "American Express Problem Statement 2"
-author: "Pankaj Patil"
-date: "12 August 2018"
----
-output:
-  md_document:
-    variant: markdown_github
-
+## American Express Problem Statement 2
+## By Pankaj Patil
+## Submitted on : 12 August 2018
 ---
 
 ```{r setup, include=FALSE}
